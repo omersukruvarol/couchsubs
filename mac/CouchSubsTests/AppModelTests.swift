@@ -7,7 +7,11 @@ import XCTest
 
 final class MemoryStore: AppStore {
     var values: [String: Data] = [:]
-    func save<T: Encodable>(_ value: T, for key: String) { values[key] = try? JSONEncoder().encode(value) }
+    var rejectedWrites: Set<String> = []
+    func save<T: Encodable>(_ value: T, for key: String) {
+        guard !rejectedWrites.contains(key) else { return }
+        values[key] = try? JSONEncoder().encode(value)
+    }
     func load<T: Decodable>(_ type: T.Type, for key: String) -> T? { values[key].flatMap { try? JSONDecoder().decode(type, from: $0) } }
     func remove(_ key: String) { values[key] = nil }
 }
@@ -628,6 +632,18 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(model.usesFreeGemini)
         model.advance()
         XCTAssertEqual(model.step, .done)
+    }
+
+    func testSuccessfulClaudeCheckDoesNotReportKeySavedWhenStorageRejectsIt() async {
+        let store = MemoryStore()
+        store.rejectedWrites.insert(StoreKey.claudeKey)
+        let model = AppModel(services: FakeServices(), store: store, defaults: .isolated())
+
+        let result = await model.setAIKey("example-claude-key", for: .claude)
+
+        XCTAssertEqual(result, .failure(.keychainWriteFailed))
+        XCTAssertFalse(model.hasKey(.claude))
+        XCTAssertEqual(model.settings.translationEngine, .free)
     }
 
     /// Yerel model anahtarsız hazırdır; "Bağlantıyı dene" ayardaki adres ve modelle gider, yazılan anahtarı yalnız sunucu

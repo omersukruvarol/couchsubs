@@ -6,7 +6,7 @@ import Foundation
 public enum OnlineKeyState: Equatable {
     /// `modelRejected`: hizmet model adını kabul etmedi; `busy`: hizmet şu an yoğun ya da zamanında yanıt vermedi
     /// (ikisi de yalnız yapay zekâ hizmetlerinde).
-    case valid, invalid, quotaExceeded, modelRejected, unreachable, busy
+    case valid, invalid, quotaExceeded, modelRejected, unreachable, busy, keychainWriteFailed
 }
 
 /// Çevrimiçi çevirmen hatasını bildirir; ana ekran "şu an çevirmiyor" uyarısını bundan gösterir.

@@ -234,6 +234,8 @@ public enum AIFailure: Error, Equatable, Sendable {
     /// Hizmete ulaşıldı ama şu an yoğun (5xx, Gemini 503 "overloaded", Claude 529), yanıt zamanında gelmedi ya da
     /// "Dene" dakikalık sınıra takıldı. Anahtar reddedilmedi, internet de çalışıyor.
     case busy
+    /// Test sonucu ne olursa olsun API anahtarı cihazın Anahtar Zinciri'ne kaydedilemedi.
+    case keychainWriteFailed
 }
 
 /// Hizmetin bildirdiği dakikalık istek sınırı aşımı (429). Gün sınırından farklı olarak kısa sürer; kullanıcıya hata
@@ -665,6 +667,7 @@ public final class AITranslationCore: @unchecked Sendable {
     public static let localTimeout: TimeInterval = 15
     /// "Bağlantıyı dene"de yerel model için beklenen süre: ilk istek modeli belleğe yükler, uzun sürebilir.
     public static let localTestTimeout: TimeInterval = 90
+    static let cloudKeyTestTimeout: TimeInterval = 15
 
     /// Kısa zaman aşımı: altyazı birkaç saniye ekranda kalır, geç gelen çeviri işe yaramaz.
     public static func makeSession(timeout: TimeInterval = AITranslationCore.timeout) -> URLSession {
@@ -676,6 +679,14 @@ public final class AITranslationCore: @unchecked Sendable {
     /// Hizmete uygun zaman aşımıyla oturum.
     public static func makeSession(provider: AIProvider) -> URLSession {
         makeSession(timeout: provider.isLocal ? localTimeout : timeout)
+    }
+
+    static func makeKeyTestSession(provider: AIProvider) -> URLSession {
+        let limit = provider.isLocal ? localTestTimeout : cloudKeyTestTimeout
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = limit
+        configuration.timeoutIntervalForResource = limit
+        return URLSession(configuration: configuration)
     }
 
     /// Hattın ayırdığı konuşan adı; istemde adıyla söylenir.
@@ -697,15 +708,25 @@ public final class AITranslationCore: @unchecked Sendable {
         // beklemede yerel çeviri yoksa (indirilmemiş, açılamadı) satır düşmesin: hizmet yine denenir. 429 beklemesi kalır.
         let (paused, pausedForLimit) = lock.withLock { (Date() < pausedUntil, pauseRateLimited) }
         if !sources.isEmpty, paused {
-            if pausedForLimit { return remember(try await fallback(text), for: text, game: game) }
-            if let local = try await Self.tryFallback(text, fallback: fallback) { return remember(local, for: text, game: game) }
+            if pausedForLimit {
+                TranslationProbe.current?.noteFallback("\(provider.rawValue) dakikalık hizmet sınırı")
+                return remember(try await fallback(text), for: text, game: game)
+            }
+            if let local = try await Self.tryFallback(text, fallback: fallback) {
+                let reason = lastFailure.map { String(describing: $0) } ?? "bekleme"
+                TranslationProbe.current?.noteFallback("\(provider.rawValue) yeniden deneme beklemesi (\(reason))")
+                return remember(local, for: text, game: game)
+            }
         }
         // Dakikalık hak bittiyse satır sessizce yerel çeviriyle çevrilir (hata değildir). Hak uygulamanın temkinli
         // tahminidir; yerel çeviri yoksa satır denenmeden düşmesin, istek yine gönderilir.
         let allowed = sources.isEmpty || budget?.take() != false
         lock.withLock { rateLimited = !allowed }
         if !allowed {
-            if let local = try await Self.tryFallback(text, fallback: fallback) { return remember(local, for: text, game: game) }
+            if let local = try await Self.tryFallback(text, fallback: fallback) {
+                TranslationProbe.current?.noteFallback("\(provider.rawValue) uygulama dakikalık sınırı")
+                return remember(local, for: text, game: game)
+            }
             lock.withLock { rateLimited = false }
         }
         let translated: [String]
@@ -726,13 +747,16 @@ public final class AITranslationCore: @unchecked Sendable {
                 pausedUntil = Date().addingTimeInterval(pause)
                 pauseRateLimited = true
             }
+            TranslationProbe.current?.noteFallback("\(provider.rawValue) dakikalık hizmet sınırı")
             return remember(try await fallback(text), for: text, game: game)
         } catch {
-            setFailure(error as? AIFailure ?? .unreachable)
+            let reason = error as? AIFailure ?? .unreachable
+            setFailure(reason)
             lock.withLock {
                 pausedUntil = Date().addingTimeInterval(errorPause)
                 pauseRateLimited = false
             }
+            TranslationProbe.current?.noteFallback("\(provider.rawValue) hizmet durumu: \(reason)")
             return remember(try await fallback(text), for: text, game: game)
         }
         var local = false
@@ -743,6 +767,7 @@ public final class AITranslationCore: @unchecked Sendable {
             if empty || Self.isEcho(piece, sentence), let retried = try await Self.tryFallback(piece, fallback: fallback),
                !retried.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !Self.isEcho(piece, retried) {
                 // Yerel çeviri bu motorun önbelleğine yazılmaz.
+                TranslationProbe.current?.noteFallback("\(provider.rawValue) boş veya değişmemiş yanıt")
                 translations[index] = retried
                 local = true
                 continue
@@ -942,7 +967,7 @@ public final class AITranslationCore: @unchecked Sendable {
                             sample: String = AITranslationCore.sample, session: URLSession? = nil) async -> Result<String, AIFailure> {
         let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty || provider.isLocal else { return .failure(.invalidKey) }
-        let session = session ?? makeSession(timeout: provider.isLocal ? localTestTimeout : timeout)
+        let session = session ?? makeKeyTestSession(provider: provider)
         // Deneme tek istektir; çeviri hattının dakikalık hakkından yemez.
         let translator = AITranslationCore(provider: provider, key: key, model: model, server: server, session: session,
                                            budget: RequestBudget(perMinute: .max))

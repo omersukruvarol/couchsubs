@@ -936,10 +936,20 @@ final class AITranslationTests: XCTestCase {
     func testTimeoutFallsBack() async throws {
         FakeAI.timeout = true
         let translator = make(.claude)
-        let result = try await translator.translate("Run!", fallback: local)
+        let probe = TranslationProbe()
+        let result = try await TranslationProbe.$current.withValue(probe) {
+            try await translator.translate("Run!", fallback: local)
+        }
         XCTAssertEqual(result, "yerel: Run!")
+        XCTAssertTrue(probe.outcome().contains("ücretsiz yedek: claude hizmet durumu: busy"))
         // Zaman aşımı: hizmete ulaşıldı ama yanıt zamanında gelmedi; "internet bağlantınızı denetleyin" denmez.
         XCTAssertEqual(translator.lastFailure, .busy)
+    }
+
+    func testClaudeKeyTestHasABoundedTotalTimeout() {
+        let session = AITranslationCore.makeKeyTestSession(provider: .claude)
+        XCTAssertGreaterThan(session.configuration.timeoutIntervalForRequest, AITranslationCore.timeout)
+        XCTAssertEqual(session.configuration.timeoutIntervalForResource, AITranslationCore.cloudKeyTestTimeout)
     }
 
     // MARK: - Ücretsiz katman

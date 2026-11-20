@@ -177,12 +177,15 @@ public final class TranslationProbe: @unchecked Sendable {
     private let lock = NSLock()
     private var hitCount = 0
     private var fresh: [String] = []
+    private var fallbackReason: String?
 
     public init() {}
 
     func noteHit() { lock.withLock { hitCount += 1 } }
 
     func noteFresh(engine: String?) { lock.withLock { fresh.append(engine ?? "") } }
+
+    func noteFallback(_ reason: String) { lock.withLock { fallbackReason = reason } }
 
     public var hits: Int { lock.withLock { hitCount } }
 
@@ -192,8 +195,13 @@ public final class TranslationProbe: @unchecked Sendable {
     /// "çeviri:<motor>" (motor yeni çevirdi), "önbellek" (her parça önbellekten geldi) ya da bilinmiyorsa "çeviri:<yedek ad>".
     public func outcome(fallbackEngine: String = "motor") -> String {
         lock.withLock {
-            if let engine = fresh.last { return "çeviri:" + (engine.isEmpty ? fallbackEngine : engine) }
-            return hitCount > 0 ? "önbellek" : "çeviri:" + fallbackEngine
+            let result: String
+            if let engine = fresh.last {
+                result = "çeviri:" + (engine.isEmpty ? fallbackEngine : engine)
+            } else {
+                result = hitCount > 0 ? "önbellek" : "çeviri:" + fallbackEngine
+            }
+            return fallbackReason.map { "\(result), ücretsiz yedek: \($0)" } ?? result
         }
     }
 }

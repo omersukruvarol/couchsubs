@@ -6961,6 +6961,22 @@
         }
       }
     },
+    "The API key could not be saved to the Mac keychain.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The API key could not be saved to the Mac keychain."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API anahtarı Mac'in Anahtar Zinciri'ne kaydedilemedi."
+          }
+        }
+      }
+    },
     "%@ did not accept this key. Copy it again from your account page.": {
       "localizations": {
         "en": {

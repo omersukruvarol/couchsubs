@@ -68,6 +68,7 @@ extension OnlineKeyState {
         case .modelRejected: self = .modelRejected
         case .unreachable: self = .unreachable
         case .busy: self = .busy
+        case .keychainWriteFailed: self = .keychainWriteFailed
         }
     }
 }
